@@ -12,11 +12,9 @@ form_html = '''
     </form>
 '''
 
-@app.route('/', methods=['GET', 'POST'])
-
 def decode_csr(csr_b64):
     try:
-        return base64.b64decode(csr_b64.encode())
+        return base64.b64decode(csr_b64.encode()), None
     except Exception as e:
         return None, f"CSRのデコードに失敗しました: {e}"
     
@@ -94,10 +92,9 @@ def generate_kubeconfig(cert, key, ca_cert, server, username):
 def index():
     if request.method == 'POST':
         csr_b64 = request.form['csr']
-        csr = decode_csr(csr_b64)
-        if isinstance(csr, tuple):
-            # デコード失敗
-            return csr[1] + form_html
+        csr, error = decode_csr(csr_b64)
+        if error:
+            return error + form_html
         csr_name, err, api = create_k8s_csr(csr)
         if err:
             return err + form_html
@@ -125,9 +122,3 @@ def index():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
-def main():
-    print("Hello from k8s-manager!")
-
-
-if __name__ == "__main__":
-    main()
