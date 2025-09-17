@@ -1,3 +1,5 @@
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
 import base64
 from flask import Flask, request, render_template_string
 from flask import Flask, request, jsonify
@@ -6,6 +8,23 @@ app = Flask(__name__)
 
 
 def decode_csr(csr_b64):
+    try:
+        return base64.b64decode(csr_b64.encode()), None
+    except Exception as e:
+        return None, f"CSRのデコードに失敗しました: {e}"
+
+def extract_cn_from_csr(csr_bytes):
+    try:
+        csr = x509.load_der_x509_csr(csr_bytes, default_backend())
+    except Exception:
+        csr = x509.load_pem_x509_csr(csr_bytes, default_backend())
+    subject = csr.subject
+    cn = None
+    for attr in subject:
+        if attr.oid == x509.NameOID.COMMON_NAME:
+            cn = attr.value
+            break
+    return cn
     try:
         return base64.b64decode(csr_b64.encode()), None
     except Exception as e:
@@ -95,8 +114,10 @@ def api_csr():
     csr_name, err, api = create_k8s_csr(csr)
     if err:
         return jsonify({"error": err}), 500
-    # CSR名のみ返す（証明書はまだ返さない）
-    return jsonify({"csr_name": csr_name})
+    # CSRのCN(subject)からユーザ名を取得
+    username = extract_cn_from_csr(csr)
+    # CSR名とユーザ名を返す
+    return jsonify({"csr_name": csr_name, "username": username})
 
 # CSRステータス取得API
 @app.route('/api/csr/<csr_name>', methods=['GET'])
@@ -120,8 +141,10 @@ def api_csr_status(csr_name):
         server = cluster['cluster']['server']
         break
     key = b''
-    username = csr_name
-    namespace = csr_name
+    # CSRリソースからCSR本体を取得し、CN(subject)からユーザ名を抽出
+    csr_bytes = base64.b64decode(csr_status.spec.request)
+    username = extract_cn_from_csr(csr_bytes)
+    namespace = username
     kubeconfig_yaml = generate_kubeconfig(cert, key, ca_cert, server, username, namespace)
     return jsonify({"status": "approved", "kubeconfig": kubeconfig_yaml})
 
