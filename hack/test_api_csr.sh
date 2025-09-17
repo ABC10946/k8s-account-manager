@@ -16,10 +16,4 @@ RESPONSE=$(curl -s -X POST "$API_URL" \
   -d '{"csr": "'$CSR_B64'"}')
 
 # 結果表示
-if echo "$RESPONSE" | grep -q 'kubeconfig'; then
-  echo "kubeconfig取得成功:"
-  echo "$RESPONSE" | jq -r .kubeconfig
-else
-  echo "エラー:"
-  echo "$RESPONSE"
-fi
+echo "$RESPONSE"
