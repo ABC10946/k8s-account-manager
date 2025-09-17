@@ -1,16 +1,9 @@
 import base64
 from flask import Flask, request, render_template_string
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# CSR入力フォーム
-form_html = '''
-    <form method="post">
-        <label>Base64エンコードされたCSR:</label><br>
-        <textarea name="csr" rows="10" cols="60"></textarea><br>
-        <input type="submit" value="送信">
-    </form>
-'''
 
 def decode_csr(csr_b64):
     try:
@@ -52,7 +45,7 @@ def wait_for_approval(api, csr_name, timeout=60):
 def get_certificate(csr_status):
     return base64.b64decode(csr_status.status.certificate)
 
-def generate_kubeconfig(cert, key, ca_cert, server, username):
+def generate_kubeconfig(cert, key, ca_cert, server, username, namespace):
     import yaml
     kubeconfig = {
         "apiVersion": "v1",
@@ -80,7 +73,8 @@ def generate_kubeconfig(cert, key, ca_cert, server, username):
                 "name": "default",
                 "context": {
                     "cluster": "kubernetes",
-                    "user": username
+                    "user": username,
+                    "namespace": namespace
                 }
             }
         ],
@@ -88,37 +82,37 @@ def generate_kubeconfig(cert, key, ca_cert, server, username):
     }
     return yaml.dump(kubeconfig, allow_unicode=True)
 
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST':
-        csr_b64 = request.form['csr']
-        csr, error = decode_csr(csr_b64)
-        if error:
-            return error + form_html
-        csr_name, err, api = create_k8s_csr(csr)
-        if err:
-            return err + form_html
-        csr_status, err = wait_for_approval(api, csr_name)
-        if err:
-            return err + form_html
-        cert = get_certificate(csr_status)
-        # CA証明書取得
-        from kubernetes import config
-        kube_cfg = config.kube_config.KubeConfigMerger(config.kube_config.KUBE_CONFIG_DEFAULT_LOCATION)
-        ca_cert = None
-        server = None
-        for cluster in kube_cfg.config['clusters']:
-            ca_cert = base64.b64decode(cluster['cluster']['certificate-authority-data'])
-            server = cluster['cluster']['server']
-            break
-        # CSRリソースには秘密鍵は含まれないため、CSR生成時の秘密鍵を利用する必要があります。
-        # 今回はフォーム入力CSRのみ受け付けるため、秘密鍵はユーザー側で管理している前提です。
-        # サンプルとして空文字列をセットします。
-        key = b''
-        username = csr_name
-        kubeconfig_yaml = generate_kubeconfig(cert, key, ca_cert, server, username)
-        return render_template_string('<h2>kubeconfig</h2><pre>{{ kubeconfig }}</pre>', kubeconfig=kubeconfig_yaml)
-    return form_html
 
+# REST APIエンドポイント
+@app.route('/api/csr', methods=['POST'])
+def api_csr():
+    data = request.get_json()
+    csr_b64 = data.get('csr')
+    if not csr_b64:
+        return jsonify({"error": "csrフィールドが必要です"}), 400
+    csr, error = decode_csr(csr_b64)
+    if error:
+        return jsonify({"error": error}), 400
+    csr_name, err, api = create_k8s_csr(csr)
+    if err:
+        return jsonify({"error": err}), 500
+    csr_status, err = wait_for_approval(api, csr_name)
+    if err:
+        return jsonify({"error": err}), 500
+    cert = get_certificate(csr_status)
+    # CA証明書取得
+    from kubernetes import config
+    kube_cfg = config.kube_config.KubeConfigMerger(config.kube_config.KUBE_CONFIG_DEFAULT_LOCATION)
+    ca_cert = None
+    server = None
+    for cluster in kube_cfg.config['clusters']:
+        ca_cert = base64.b64decode(cluster['cluster']['certificate-authority-data'])
+        server = cluster['cluster']['server']
+        break
+    key = b''
+    username = csr_name
+    namespace = csr_name
+    kubeconfig_yaml = generate_kubeconfig(cert, key, ca_cert, server, username, namespace)
+    return jsonify({"kubeconfig": kubeconfig_yaml})
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
