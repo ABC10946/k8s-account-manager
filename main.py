@@ -82,8 +82,7 @@ def generate_kubeconfig(cert, key, ca_cert, server, username, namespace):
     }
     return yaml.dump(kubeconfig, allow_unicode=True)
 
-
-# REST APIエンドポイント
+# REST APIエンドポイント（2段階方式）
 @app.route('/api/csr', methods=['POST'])
 def api_csr():
     data = request.get_json()
@@ -96,12 +95,23 @@ def api_csr():
     csr_name, err, api = create_k8s_csr(csr)
     if err:
         return jsonify({"error": err}), 500
-    csr_status, err = wait_for_approval(api, csr_name)
-    if err:
-        return jsonify({"error": err}), 500
+    # CSR名のみ返す（証明書はまだ返さない）
+    return jsonify({"csr_name": csr_name})
+
+# CSRステータス取得API
+@app.route('/api/csr/<csr_name>', methods=['GET'])
+def api_csr_status(csr_name):
+    from kubernetes import client, config
+    config.load_kube_config()
+    api = client.CertificatesV1Api()
+    try:
+        csr_status = api.read_certificate_signing_request(name=csr_name)
+    except Exception as e:
+        return jsonify({"error": f"CSR取得に失敗しました: {e}"}), 404
+    if not csr_status.status or not csr_status.status.certificate:
+        return jsonify({"status": "pending"})
     cert = get_certificate(csr_status)
     # CA証明書取得
-    from kubernetes import config
     kube_cfg = config.kube_config.KubeConfigMerger(config.kube_config.KUBE_CONFIG_DEFAULT_LOCATION)
     ca_cert = None
     server = None
@@ -113,6 +123,7 @@ def api_csr():
     username = csr_name
     namespace = csr_name
     kubeconfig_yaml = generate_kubeconfig(cert, key, ca_cert, server, username, namespace)
-    return jsonify({"kubeconfig": kubeconfig_yaml})
+    return jsonify({"status": "approved", "kubeconfig": kubeconfig_yaml})
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
