@@ -51,15 +51,6 @@ def create_k8s_csr(csr):
         return None, f"Kubernetes CSR作成に失敗しました: {e}", None
     return csr_name, None, api
 
-def wait_for_approval(api, csr_name, timeout=60):
-    import time
-    for _ in range(timeout):
-        csr_status = api.read_certificate_signing_request(name=csr_name)
-        if csr_status.status and csr_status.status.certificate:
-            return csr_status, None
-        time.sleep(2)
-    return None, "管理者による承認がタイムアウトしました。"
-
 
 def get_certificate(csr_status):
     return base64.b64decode(csr_status.status.certificate)
