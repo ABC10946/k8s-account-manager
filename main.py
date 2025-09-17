@@ -136,6 +136,51 @@ def api_csr_status(csr_name):
     csr_bytes = base64.b64decode(csr_status.spec.request)
     username = extract_cn_from_csr(csr_bytes)
     namespace = username
+
+    # --- ここからnamespace, role, rolebinding自動作成 ---
+    api_core = client.CoreV1Api()
+    api_rbac = client.RbacAuthorizationV1Api()
+    # Namespace作成
+    try:
+        api_core.create_namespace(client.V1Namespace(metadata=client.V1ObjectMeta(name=namespace)))
+    except client.exceptions.ApiException as e:
+        if e.status != 409:
+            return jsonify({"error": f"Namespace作成失敗: {e}"}), 500
+    # Role作成
+    role_body = client.V1Role(
+        metadata=client.V1ObjectMeta(name=namespace, namespace=namespace),
+        rules=[client.V1PolicyRule(
+            api_groups=["*"],
+            resources=["*"],
+            verbs=["get", "list", "watch", "create", "update", "patch", "delete"]
+        )]
+    )
+    try:
+        api_rbac.create_namespaced_role(namespace=namespace, body=role_body)
+    except client.exceptions.ApiException as e:
+        if e.status != 409:
+            return jsonify({"error": f"Role作成失敗: {e}"}), 500
+    # RoleBinding作成
+    rolebinding_body = client.V1RoleBinding(
+        metadata=client.V1ObjectMeta(name=namespace, namespace=namespace),
+        role_ref=client.V1RoleRef(
+            api_group="rbac.authorization.k8s.io",
+            kind="Role",
+            name=namespace
+        ),
+        subjects=[{
+            "kind": "User",
+            "name": username,
+            "apiGroup": "rbac.authorization.k8s.io"
+        }]
+    )
+    try:
+        api_rbac.create_namespaced_role_binding(namespace=namespace, body=rolebinding_body)
+    except client.exceptions.ApiException as e:
+        if e.status != 409:
+            return jsonify({"error": f"RoleBinding作成失敗: {e}"}), 500
+    # --- ここまで自動作成 ---
+
     kubeconfig_yaml = generate_kubeconfig(cert, key, ca_cert, server, username, namespace)
     return jsonify({"status": "approved", "kubeconfig": kubeconfig_yaml})
 
